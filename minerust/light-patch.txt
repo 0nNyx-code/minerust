@@ -1,0 +1,761 @@
+diff -ru a/README.md b/README.md
+--- a/README.md	2026-10-17 16:47:13.000000000 +0700
++++ b/README.md	2026-11-02 11:17:13.000000000 +0700
+@@ -1,62 +1,22 @@
+-## LIGHT Shaders
+-
+-As light as light, as beautiful as painting.
+-
+-Make you have both high FPS and good image quality.
+-
+----
+-
+-### Gallery
+-
+-![gallery](https://cdn.modrinth.com/data/UuwCHIS3/images/00b5c65dd6fc249bd5a505a704a12016d0903857.png)
+-
+----
+-
+-### Features
+-
+-#### FPS in your hands.
+-
+-Optimized based on Chocapic13's Shaders,
+-
+-Removed some unnecessary features,
+-
+-Some bugs have also been fixed,
+-
+-Let you have an excellent FPS.
+-
+-#### Crisp and bright picture.
+-
+-Removed some features of Chocapic13's Shaders,
+-
+-But it's not one-size-fits-all like some shaders,
+-
+-Instead, it retains excellent picture manifestation:
+-- Water reflections
+-- Water surface ripples
+-- Good shadows
+-- Outstanding performance in different weather
+-- Clouds that move with the wind
+-- TAA anti-aliasing (optional)
+-- and more...
+-
+-And added a few features of it own.
+-
+-#### Exclusive Atmosphere.
+-
+-Gives you a unique atmosphere.
+-
+-#### Excellent field of view brightness.
+-
+-Doesn't make you feel so dark in the Nether instead of you can't see anything like the usual shaders.
+-
+----
+-
+-### Requirements
+-
+-- Iris Shaders, Oculus Shaders or OptiFine.
+-- OpenGL 1.2 support.
+-- An ordinary GPU. (even extremely below average)
+-
+----
+-
+-### *If you want to support my work, you can subscribe my [Patreon](https://www.patreon.com/Author87668/join) membership.*
++# LIGHT Shaders — NolModal Tech x Bagus Dev (Lite)
++
++Turunan LIGHT Shaders 1.9.0.1 (Chocapic13's Shaders edit), dibundel sebagai
++shader default di fork "NolModal Tech x Bagus Dev" untuk Horizon Android.
++
++Kredit asli: Chocapic13 dan pembuat LIGHT Shaders. Tidak untuk dijual.
++
++## Yang diubah dari LIGHT asli
++
++Perbaikan visual (sudah ada di paket HorizonFix):
++- Alpha cutout rumput/daun/bunga benar, tidak lagi jadi blok hijau raksasa.
++- Kaca tidak lagi dianggap air.
++- final.fsh valid GLSL 120.
++- Output shadow dirapikan.
++
++Optimasi Lite (FPS, tampilan tetap):
++- Shadow map 512 (dari 1024) dan jarak bayangan 70 blok.
++- TAA dimatikan (hemat satu pass penuh, tepi tetap tajam).
++- gcolor RGBA8, bukan RGBA16: bandwidth turun di tile GPU.
++- Godrays 4 sampel (dari 7), jarak sampel dikompensasi.
++- Refleksi air di-raytrace maksimal 10 langkah (dari 16); refleksi,
++  riak air, caustics, awan bergerak, dan bayangan tetap aktif.
+diff -ru a/shaders/composite.fsh b/shaders/composite.fsh
+--- a/shaders/composite.fsh	2026-10-17 16:49:40.000000000 +0700
++++ b/shaders/composite.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -255,7 +255,7 @@
+     float sr = 0.0;
+ 	float i = 0.0;
+ 	/*--------------------------------*/
+-    while (i<16.0) {
++    while (i<10.0) {
+         vec3 pos = nvec3(gbufferProjection * nvec4(fragpos)) * 0.5 + 0.5;
+ 
+         if(pos.x < 0.0 || pos.x > 1.0 || pos.y < 0.0 || pos.y > 1.0 || pos.z < 0.0 || pos.z > 1.0) break;
+@@ -391,7 +391,7 @@
+ 
+ #ifdef GODRAYS
+ 		vec2 deltatexcoord = vec2(lightPos - texcoord);
+-		deltatexcoord *= density;
++		deltatexcoord *= density*1.75;
+ 		vec2 noisetc = texcoord + deltatexcoord*getnoise(texcoord)*grnoise;
+ 			
+ 			float depthSample = texture2D(depthtex0, deltatexcoord + noisetc).x;
+@@ -406,17 +406,11 @@
+ 			depthSample = texture2D(depthtex0, 4.0*deltatexcoord + noisetc).x;
+ 			gr += float(depthSample > comp);
+ 			
+-			depthSample = texture2D(depthtex0, 5.0*deltatexcoord + noisetc).x;
+-			gr += float(depthSample > comp);
+ 			
+-			depthSample = texture2D(depthtex0, 6.0*deltatexcoord + noisetc).x;
+-			gr += float(depthSample > comp);
+ 			
+-			depthSample = texture2D(depthtex0, 7.0*deltatexcoord + noisetc).x;
+-			gr += float(depthSample > comp);
+ 			
+ 
+-gr /= 7.0;
++gr /= 4.0;
+ 
+ 
+ //calculate sun occlusion (only on one pixel) 
+diff -ru a/shaders/composite1.fsh b/shaders/composite1.fsh
+--- a/shaders/composite1.fsh	2026-10-17 16:47:13.000000000 +0700
++++ b/shaders/composite1.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -46,7 +46,7 @@
+ // Reading and writing the history in the same pass is safe: OptiFine/Iris
+ // flip the buffer, so the read always returns the previous frame's result.
+ 
+-#define TAA
++//#define TAA
+ 
+ varying vec2 texcoord;
+ 
+diff -ru a/shaders/final.fsh b/shaders/final.fsh
+--- a/shaders/final.fsh	2026-10-17 16:51:07.000000000 +0700
++++ b/shaders/final.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -209,7 +209,7 @@
+ float t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+ return t * t * (3.0 - 2.0 * t); }
+ 
+-in vec2 coord0;
++varying vec2 coord0;
+ 
+ #ifdef SHARPENING
+ void doSharpen(inout vec3 color, vec2 textureCoord) {
+diff -ru a/shaders/gbuffers_entities.fsh b/shaders/gbuffers_entities.fsh
+--- a/shaders/gbuffers_entities.fsh	2026-10-17 16:47:14.000000000 +0700
++++ b/shaders/gbuffers_entities.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -71,6 +71,7 @@
+ void main() {
+ 
+ 	vec4 albedo = texture2D(texture, texcoord.xy)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 	
+ 	
+ 	vec4 fragposition = gbufferProjectionInverse*(vec4(gl_FragCoord.xy/vec2(viewWidth,viewHeight),gl_FragCoord.z,1.0)*2.0-1.0);
+diff -ru a/shaders/gbuffers_hand.fsh b/shaders/gbuffers_hand.fsh
+--- a/shaders/gbuffers_hand.fsh	2026-10-17 16:39:41.000000000 +0700
++++ b/shaders/gbuffers_hand.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -60,6 +60,7 @@
+ void main() {
+ 
+ 	vec4 albedo = texture2D(texture, texcoord.xy)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 	
+ 	
+ 	vec4 fragposition = gbufferProjectionInverse*(vec4(gl_FragCoord.xy/vec2(viewWidth,viewHeight),gl_FragCoord.z,1.0)*2.0-1.0);
+diff -ru a/shaders/gbuffers_terrain.fsh b/shaders/gbuffers_terrain.fsh
+--- a/shaders/gbuffers_terrain.fsh	2026-10-17 16:47:14.000000000 +0700
++++ b/shaders/gbuffers_terrain.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -17,11 +17,11 @@
+ #elif SHADOW_QUALITY == 3
+ 	const int shadowMapResolution = 4096;
+ #endif
+-const float shadowDistance = 120.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
++const float shadowDistance = 70.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
+ 	const bool 	shadowHardwareFiltering0 = true;
+ 	const float	sunPathRotation	= -40.0f;
+ /*
+-const int gcolorFormat = RGBA16;
++const int gcolorFormat = RGBA8;
+ const int gdepthFormat = RGBA8;
+ const int gaux2Format = RGBA8;
+ const int gaux3Format = RGBA8;
+@@ -78,6 +78,7 @@
+ 
+ void main() {
+ 	vec4 albedo = texture2D(texture, texcoord.xy)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 	
+ 	
+ 	vec4 fragposition = gbufferProjectionInverse*(vec4(gl_FragCoord.xy/vec2(viewWidth,viewHeight),gl_FragCoord.z,1.0)*2.0-1.0);
+diff -ru a/shaders/gbuffers_textured.fsh b/shaders/gbuffers_textured.fsh
+--- a/shaders/gbuffers_textured.fsh	2026-10-17 16:39:41.000000000 +0700
++++ b/shaders/gbuffers_textured.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -6,7 +6,7 @@
+ Read the terms of modification and sharing before changing something below please !
+ !! DO NOT REMOVE !!
+ */
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -57,6 +57,7 @@
+ 
+ void main() {
+ 	vec4 albedo = texture2D(texture, texcoord)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 
+ 
+ 	vec2 adjustedTexCoord = texcoord;
+diff -ru a/shaders/gbuffers_textured_lit.fsh b/shaders/gbuffers_textured_lit.fsh
+--- a/shaders/gbuffers_textured_lit.fsh	2026-10-17 16:47:14.000000000 +0700
++++ b/shaders/gbuffers_textured_lit.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -17,11 +17,11 @@
+ #elif SHADOW_QUALITY == 3
+ 	const int shadowMapResolution = 4096;
+ #endif
+-const float shadowDistance = 120.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
++const float shadowDistance = 70.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
+ 	const bool 	shadowHardwareFiltering0 = true;
+ 	const float	sunPathRotation	= -40.0f;
+ /*
+-const int gcolorFormat = RGBA16;
++const int gcolorFormat = RGBA8;
+ const int gdepthFormat = RGBA8;
+ const int gnormalFormat = RGBA16;		//normals are exported only for reflective surfaces
+ */
+@@ -67,6 +67,7 @@
+ void main() {
+ 
+ 	vec4 albedo = texture2D(texture, texcoord)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 
+ 	vec2 adjustedTexCoord = texcoord;
+ 	
+diff -ru a/shaders/gbuffers_water.fsh b/shaders/gbuffers_water.fsh
+--- a/shaders/gbuffers_water.fsh	2026-10-17 16:52:31.000000000 +0700
++++ b/shaders/gbuffers_water.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -6,7 +6,7 @@
+ Read the terms of modification and sharing before changing something below please !
+ !! DO NOT REMOVE !!
+ */
+-	const float smres = 1024.0;
++	const float smres = 512.0;
+ 	
+ 	#define MIX_TEX	0.7	
+ 	vec4 watercolor = vec4(0.1,0.4,0.6,0.4); 	//water color and opacity (r,g,b,opacity)
+diff -ru a/shaders/gbuffers_water.vsh b/shaders/gbuffers_water.vsh
+--- a/shaders/gbuffers_water.vsh	2026-10-17 16:51:58.000000000 +0700
++++ b/shaders/gbuffers_water.vsh	2026-11-02 11:17:12.000000000 +0700
+@@ -125,7 +125,7 @@
+ 	// so it gets the full water pipeline (waves normals, refraction, caustics,
+ 	// reflections) instead of glitching. The mesh is already displaced by the
+ 	// mod, so no shader wave offset is applied to it.
+-	else if (mc_Entity.x < 1.0) {
++	else if (mc_Entity.x < 1.0 && (max(max(gl_Color.r,gl_Color.g),gl_Color.b) - min(min(gl_Color.r,gl_Color.g),gl_Color.b)) > 0.06) {
+ 	iswater = 1.0;
+ 	viewpos.y -= 0.01;
+ }
+diff -ru a/shaders/shadow.fsh b/shaders/shadow.fsh
+--- a/shaders/shadow.fsh	2026-10-17 16:39:41.000000000 +0700
++++ b/shaders/shadow.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -7,7 +7,7 @@
+ Place two leading Slashes in front of the following '#define' lines in order to disable an option.
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -17,7 +17,7 @@
+ #elif SHADOW_QUALITY == 3
+ 	const int shadowMapResolution = 4096;
+ #endif
+-const float shadowDistance = 120.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
++const float shadowDistance = 70.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
+ 
+ varying vec4 texcoord;
+ 
+@@ -34,7 +34,5 @@
+ 
+ 	if (col.a < 0.001) discard;
+ 	
+-	gl_FragColor = col;
+-
+-	gl_FragData[0] = texture2D(tex,texcoord.xy);
++	gl_FragData[0] = col;
+ }
+\ No newline at end of file
+diff -ru a/shaders/world-1/composite.fsh b/shaders/world-1/composite.fsh
+--- a/shaders/world-1/composite.fsh	2026-10-17 16:49:40.000000000 +0700
++++ b/shaders/world-1/composite.fsh	2026-11-02 11:17:13.000000000 +0700
+@@ -209,7 +209,7 @@
+     float sr = 0.0;
+ 	float i = 0.0;
+ 	/*--------------------------------*/
+-    while (i<16.0) {
++    while (i<10.0) {
+         vec3 pos = nvec3(gbufferProjection * nvec4(fragpos)) * 0.5 + 0.5;
+ 
+         if(pos.x < 0.0 || pos.x > 1.0 || pos.y < 0.0 || pos.y > 1.0 || pos.z < 0.0 || pos.z > 1.0) break;
+@@ -295,7 +295,7 @@
+ 
+ 
+ 		vec2 deltatexcoord = vec2(lightPos - texcoord);
+-		deltatexcoord *= density;
++		deltatexcoord *= density*1.75;
+ 		vec2 noisetc = texcoord + deltatexcoord*getnoise(texcoord)*grnoise;
+ 			
+ 			float depthSample = texture2D(depthtex0, deltatexcoord + noisetc).x;
+@@ -310,17 +310,11 @@
+ 			depthSample = texture2D(depthtex0, 4.0*deltatexcoord + noisetc).x;
+ 			gr += float(depthSample > comp);
+ 			
+-			depthSample = texture2D(depthtex0, 5.0*deltatexcoord + noisetc).x;
+-			gr += float(depthSample > comp);
+ 			
+-			depthSample = texture2D(depthtex0, 6.0*deltatexcoord + noisetc).x;
+-			gr += float(depthSample > comp);
+ 			
+-			depthSample = texture2D(depthtex0, 7.0*deltatexcoord + noisetc).x;
+-			gr += float(depthSample > comp);
+ 			
+ 
+-gr /= 7.0;
++gr /= 4.0;
+ 
+ 
+ //calculate sun occlusion (only on one pixel) 
+diff -ru a/shaders/world-1/composite1.fsh b/shaders/world-1/composite1.fsh
+--- a/shaders/world-1/composite1.fsh	2026-10-17 16:47:14.000000000 +0700
++++ b/shaders/world-1/composite1.fsh	2026-11-02 11:17:13.000000000 +0700
+@@ -46,7 +46,7 @@
+ // Reading and writing the history in the same pass is safe: OptiFine/Iris
+ // flip the buffer, so the read always returns the previous frame's result.
+ 
+-#define TAA
++//#define TAA
+ 
+ varying vec2 texcoord;
+ 
+diff -ru a/shaders/world-1/final.fsh b/shaders/world-1/final.fsh
+--- a/shaders/world-1/final.fsh	2026-10-17 16:51:08.000000000 +0700
++++ b/shaders/world-1/final.fsh	2026-11-02 11:17:13.000000000 +0700
+@@ -209,7 +209,7 @@
+ float t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+ return t * t * (3.0 - 2.0 * t); }
+ 
+-in vec2 coord0;
++varying vec2 coord0;
+ 
+ #ifdef SHARPENING
+ void doSharpen(inout vec3 color, vec2 textureCoord) {
+diff -ru a/shaders/world-1/gbuffers_entities.fsh b/shaders/world-1/gbuffers_entities.fsh
+--- a/shaders/world-1/gbuffers_entities.fsh	2026-10-17 16:47:14.000000000 +0700
++++ b/shaders/world-1/gbuffers_entities.fsh	2026-11-02 11:17:13.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -71,6 +71,7 @@
+ void main() {
+ 
+ 	vec4 albedo = texture2D(texture, texcoord.xy)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 	
+ 	
+ 	vec4 fragposition = gbufferProjectionInverse*(vec4(gl_FragCoord.xy/vec2(viewWidth,viewHeight),gl_FragCoord.z,1.0)*2.0-1.0);
+diff -ru a/shaders/world-1/gbuffers_hand.fsh b/shaders/world-1/gbuffers_hand.fsh
+--- a/shaders/world-1/gbuffers_hand.fsh	2026-10-17 16:39:41.000000000 +0700
++++ b/shaders/world-1/gbuffers_hand.fsh	2026-11-02 11:17:13.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -60,6 +60,7 @@
+ void main() {
+ 
+ 	vec4 albedo = texture2D(texture, texcoord.xy)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 	
+ 	
+ 	vec4 fragposition = gbufferProjectionInverse*(vec4(gl_FragCoord.xy/vec2(viewWidth,viewHeight),gl_FragCoord.z,1.0)*2.0-1.0);
+diff -ru a/shaders/world-1/gbuffers_terrain.fsh b/shaders/world-1/gbuffers_terrain.fsh
+--- a/shaders/world-1/gbuffers_terrain.fsh	2026-10-17 16:47:14.000000000 +0700
++++ b/shaders/world-1/gbuffers_terrain.fsh	2026-11-02 11:17:13.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -17,11 +17,11 @@
+ #elif SHADOW_QUALITY == 3
+ 	const int shadowMapResolution = 4096;
+ #endif
+-const float shadowDistance = 120.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
++const float shadowDistance = 70.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
+ 	const bool 	shadowHardwareFiltering0 = true;
+ 	const float	sunPathRotation	= -40.0f;
+ /*
+-const int gcolorFormat = RGBA16;
++const int gcolorFormat = RGBA8;
+ const int gdepthFormat = RGBA8;
+ const int gaux2Format = RGBA8;
+ const int gaux3Format = RGBA8;
+@@ -78,6 +78,7 @@
+ 
+ void main() {
+ 	vec4 albedo = texture2D(texture, texcoord.xy)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 	
+ 	
+ 	vec4 fragposition = gbufferProjectionInverse*(vec4(gl_FragCoord.xy/vec2(viewWidth,viewHeight),gl_FragCoord.z,1.0)*2.0-1.0);
+diff -ru a/shaders/world-1/gbuffers_textured.fsh b/shaders/world-1/gbuffers_textured.fsh
+--- a/shaders/world-1/gbuffers_textured.fsh	2026-10-17 16:39:41.000000000 +0700
++++ b/shaders/world-1/gbuffers_textured.fsh	2026-11-02 11:17:13.000000000 +0700
+@@ -6,7 +6,7 @@
+ Read the terms of modification and sharing before changing something below please !
+ !! DO NOT REMOVE !!
+ */
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -57,6 +57,7 @@
+ 
+ void main() {
+ 	vec4 albedo = texture2D(texture, texcoord)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 
+ 
+ 	vec2 adjustedTexCoord = texcoord;
+@@ -81,7 +82,7 @@
+ 	// Improved shadow offset calculation - based on Complementary Shaders approach
+ 	float NdotLm = clamp(diffuse * 1.01 - 0.01, 0.0, 1.0) * 0.99 + 0.01;
+ 	float biasFactor = sqrt(1.0 - NdotLm * NdotLm) / NdotLm;
+-	float distortBias = distortFactor * 120.0 / 256.0;  // shadowDistance = 120.0
++	float distortBias = distortFactor * 70.0 / 256.0;  // shadowDistance = 120.0
+ 	distortBias *= 8.0 * distortBias;
+ 	float diffthresh = (distortBias * biasFactor + 0.05) / shadowMapResolution;
+ 	
+diff -ru a/shaders/world-1/gbuffers_textured_lit.fsh b/shaders/world-1/gbuffers_textured_lit.fsh
+--- a/shaders/world-1/gbuffers_textured_lit.fsh	2026-10-17 16:47:14.000000000 +0700
++++ b/shaders/world-1/gbuffers_textured_lit.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -17,11 +17,11 @@
+ #elif SHADOW_QUALITY == 3
+ 	const int shadowMapResolution = 4096;
+ #endif
+-const float shadowDistance = 120.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
++const float shadowDistance = 70.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
+ 	const bool 	shadowHardwareFiltering0 = true;
+ 	const float	sunPathRotation	= -40.0f;
+ /*
+-const int gcolorFormat = RGBA16;
++const int gcolorFormat = RGBA8;
+ const int gdepthFormat = RGBA8;
+ const int gnormalFormat = RGBA16;		//normals are exported only for reflective surfaces
+ */
+@@ -67,6 +67,7 @@
+ void main() {
+ 
+ 	vec4 albedo = texture2D(texture, texcoord)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 
+ 	vec2 adjustedTexCoord = texcoord;
+ 	
+diff -ru a/shaders/world-1/gbuffers_water.fsh b/shaders/world-1/gbuffers_water.fsh
+--- a/shaders/world-1/gbuffers_water.fsh	2026-10-17 16:52:32.000000000 +0700
++++ b/shaders/world-1/gbuffers_water.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -6,7 +6,7 @@
+ Read the terms of modification and sharing before changing something below please !
+ !! DO NOT REMOVE !!
+ */
+-	const float smres = 1024.0;
++	const float smres = 512.0;
+ 	
+ 	#define MIX_TEX	0.7	
+ 	vec4 watercolor = vec4(0.1,0.4,0.6,0.4); 	//water color and opacity (r,g,b,opacity)
+diff -ru a/shaders/world1/composite.fsh b/shaders/world1/composite.fsh
+--- a/shaders/world1/composite.fsh	2026-10-17 16:49:40.000000000 +0700
++++ b/shaders/world1/composite.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -209,7 +209,7 @@
+     float sr = 0.0;
+ 	float i = 0.0;
+ 	/*--------------------------------*/
+-    while (i<16.0) {
++    while (i<10.0) {
+         vec3 pos = nvec3(gbufferProjection * nvec4(fragpos)) * 0.5 + 0.5;
+ 
+         if(pos.x < 0.0 || pos.x > 1.0 || pos.y < 0.0 || pos.y > 1.0 || pos.z < 0.0 || pos.z > 1.0) break;
+@@ -344,7 +344,7 @@
+ 
+ 
+ 		vec2 deltatexcoord = vec2(lightPos - texcoord);
+-		deltatexcoord *= density;
++		deltatexcoord *= density*1.75;
+ 		vec2 noisetc = texcoord + deltatexcoord*getnoise(texcoord)*grnoise;
+ 			
+ 			float depthSample = texture2D(depthtex0, deltatexcoord + noisetc).x;
+@@ -359,17 +359,11 @@
+ 			depthSample = texture2D(depthtex0, 4.0*deltatexcoord + noisetc).x;
+ 			gr += float(depthSample > comp);
+ 			
+-			depthSample = texture2D(depthtex0, 5.0*deltatexcoord + noisetc).x;
+-			gr += float(depthSample > comp);
+ 			
+-			depthSample = texture2D(depthtex0, 6.0*deltatexcoord + noisetc).x;
+-			gr += float(depthSample > comp);
+ 			
+-			depthSample = texture2D(depthtex0, 7.0*deltatexcoord + noisetc).x;
+-			gr += float(depthSample > comp);
+ 			
+ 
+-gr /= 7.0;
++gr /= 4.0;
+ 
+ 
+ //calculate sun occlusion (only on one pixel) 
+diff -ru a/shaders/world1/composite1.fsh b/shaders/world1/composite1.fsh
+--- a/shaders/world1/composite1.fsh	2026-10-17 16:47:14.000000000 +0700
++++ b/shaders/world1/composite1.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -46,7 +46,7 @@
+ // Reading and writing the history in the same pass is safe: OptiFine/Iris
+ // flip the buffer, so the read always returns the previous frame's result.
+ 
+-#define TAA
++//#define TAA
+ 
+ varying vec2 texcoord;
+ 
+diff -ru a/shaders/world1/final.fsh b/shaders/world1/final.fsh
+--- a/shaders/world1/final.fsh	2026-10-17 16:51:09.000000000 +0700
++++ b/shaders/world1/final.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -209,7 +209,7 @@
+ float t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+ return t * t * (3.0 - 2.0 * t); }
+ 
+-in vec2 coord0;
++varying vec2 coord0;
+ 
+ #ifdef SHARPENING
+ void doSharpen(inout vec3 color, vec2 textureCoord) {
+diff -ru a/shaders/world1/gbuffers_entities.fsh b/shaders/world1/gbuffers_entities.fsh
+--- a/shaders/world1/gbuffers_entities.fsh	2026-10-17 16:47:14.000000000 +0700
++++ b/shaders/world1/gbuffers_entities.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -71,6 +71,7 @@
+ void main() {
+ 
+ 	vec4 albedo = texture2D(texture, texcoord.xy)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 	
+ 	
+ 	vec4 fragposition = gbufferProjectionInverse*(vec4(gl_FragCoord.xy/vec2(viewWidth,viewHeight),gl_FragCoord.z,1.0)*2.0-1.0);
+diff -ru a/shaders/world1/gbuffers_hand.fsh b/shaders/world1/gbuffers_hand.fsh
+--- a/shaders/world1/gbuffers_hand.fsh	2026-10-17 16:39:41.000000000 +0700
++++ b/shaders/world1/gbuffers_hand.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -60,6 +60,7 @@
+ void main() {
+ 
+ 	vec4 albedo = texture2D(texture, texcoord.xy)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 	
+ 	
+ 	vec4 fragposition = gbufferProjectionInverse*(vec4(gl_FragCoord.xy/vec2(viewWidth,viewHeight),gl_FragCoord.z,1.0)*2.0-1.0);
+diff -ru a/shaders/world1/gbuffers_terrain.fsh b/shaders/world1/gbuffers_terrain.fsh
+--- a/shaders/world1/gbuffers_terrain.fsh	2026-10-17 16:47:14.000000000 +0700
++++ b/shaders/world1/gbuffers_terrain.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -17,11 +17,11 @@
+ #elif SHADOW_QUALITY == 3
+ 	const int shadowMapResolution = 4096;
+ #endif
+-const float shadowDistance = 120.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
++const float shadowDistance = 70.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
+ 	const bool 	shadowHardwareFiltering0 = true;
+ 	const float	sunPathRotation	= -40.0f;
+ /*
+-const int gcolorFormat = RGBA16;
++const int gcolorFormat = RGBA8;
+ const int gdepthFormat = RGBA8;
+ const int gaux2Format = RGBA8;
+ const int gaux3Format = RGBA8;
+@@ -78,6 +78,7 @@
+ 
+ void main() {
+ 	vec4 albedo = texture2D(texture, texcoord.xy)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 	
+ 	
+ 	vec4 fragposition = gbufferProjectionInverse*(vec4(gl_FragCoord.xy/vec2(viewWidth,viewHeight),gl_FragCoord.z,1.0)*2.0-1.0);
+diff -ru a/shaders/world1/gbuffers_textured.fsh b/shaders/world1/gbuffers_textured.fsh
+--- a/shaders/world1/gbuffers_textured.fsh	2026-10-17 16:39:41.000000000 +0700
++++ b/shaders/world1/gbuffers_textured.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -6,7 +6,7 @@
+ Read the terms of modification and sharing before changing something below please !
+ !! DO NOT REMOVE !!
+ */
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -57,6 +57,7 @@
+ 
+ void main() {
+ 	vec4 albedo = texture2D(texture, texcoord)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 
+ 
+ 	vec2 adjustedTexCoord = texcoord;
+@@ -81,7 +82,7 @@
+ 	// Improved shadow offset calculation - based on Complementary Shaders approach
+ 	float NdotLm = clamp(diffuse * 1.01 - 0.01, 0.0, 1.0) * 0.99 + 0.01;
+ 	float biasFactor = sqrt(1.0 - NdotLm * NdotLm) / NdotLm;
+-	float distortBias = distortFactor * 120.0 / 256.0;  // shadowDistance = 120.0
++	float distortBias = distortFactor * 70.0 / 256.0;  // shadowDistance = 120.0
+ 	distortBias *= 8.0 * distortBias;
+ 	float diffthresh = (distortBias * biasFactor + 0.05) / shadowMapResolution;
+ 	
+diff -ru a/shaders/world1/gbuffers_textured_lit.fsh b/shaders/world1/gbuffers_textured_lit.fsh
+--- a/shaders/world1/gbuffers_textured_lit.fsh	2026-10-17 16:47:14.000000000 +0700
++++ b/shaders/world1/gbuffers_textured_lit.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -7,7 +7,7 @@
+ !! DO NOT REMOVE !!
+ */
+ 
+-#define SHADOW_QUALITY 1 //[0 1 2 3]
++#define SHADOW_QUALITY 0 //[0 1 2 3]
+ #if SHADOW_QUALITY == 0
+ 	const int shadowMapResolution = 512;
+ #elif SHADOW_QUALITY == 1
+@@ -17,11 +17,11 @@
+ #elif SHADOW_QUALITY == 3
+ 	const int shadowMapResolution = 4096;
+ #endif
+-const float shadowDistance = 120.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
++const float shadowDistance = 70.0; //[60.0 80.0 100.0 120.0 140.0 160.0 180.0 200.0 240.0 280.0 320.0]
+ 	const bool 	shadowHardwareFiltering0 = true;
+ 	const float	sunPathRotation	= -40.0f;
+ /*
+-const int gcolorFormat = RGBA16;
++const int gcolorFormat = RGBA8;
+ const int gdepthFormat = RGBA8;
+ const int gnormalFormat = RGBA16;		//normals are exported only for reflective surfaces
+ */
+@@ -67,6 +67,7 @@
+ void main() {
+ 
+ 	vec4 albedo = texture2D(texture, texcoord)*color;
++	if (albedo.a < 0.1) discard; // HorizonFix: alpha cutout
+ 
+ 	vec2 adjustedTexCoord = texcoord;
+ 	
+diff -ru a/shaders/world1/gbuffers_water.fsh b/shaders/world1/gbuffers_water.fsh
+--- a/shaders/world1/gbuffers_water.fsh	2026-10-17 16:52:33.000000000 +0700
++++ b/shaders/world1/gbuffers_water.fsh	2026-11-02 11:17:12.000000000 +0700
+@@ -6,7 +6,7 @@
+ Read the terms of modification and sharing before changing something below please !
+ !! DO NOT REMOVE !!
+ */
+-	const float smres = 1024.0;
++	const float smres = 512.0;
+ 	
+ 	#define MIX_TEX	0.7	
+ 	vec4 watercolor = vec4(0.1,0.4,0.6,0.4); 	//water color and opacity (r,g,b,opacity)
