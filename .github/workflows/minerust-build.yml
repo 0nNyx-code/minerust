@@ -1,0 +1,114 @@
+name: Minerust native build
+
+# Build libhorizon_android.so (arm64) di runner GitHub — 4 core, 16 GB RAM.
+# HP cuma download .so dari Release, lalu dirakit jadi APK pakai
+# tools/horizon-assemble-apk.sh (16 detik, tanpa compile).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [android]
+    paths:
+      - 'crates/**'
+      - 'minerust/**'
+      - 'Cargo.toml'
+      - '.github/workflows/minerust-build.yml'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_BUILD_JOBS: "4"
+  CARGO_INCREMENTAL: "0"
+  HORIZON_ANDROID_PUBLIC: "1"
+  NDK_VERSION: "28.2.13676358"
+
+jobs:
+  so:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply Minerust patch
+        run: |
+          git apply --whitespace=nowarn minerust/minerust.patch
+          git diff --stat | tail -3
+
+      - name: Build LIGHT-HorizonFix-Lite.zip from Modrinth
+        run: |
+          mkdir -p /tmp/light && cd /tmp/light
+          curl -sSL -o light.zip "https://cdn.modrinth.com/data/UuwCHIS3/versions/QeFC9NtQ/LIGHT-Shaders-1.9.0.zip"
+          unzip -oq light.zip && rm light.zip
+          cp "$GITHUB_WORKSPACE/minerust/light-patch.txt" ./light-patch.txt
+          git init -q . && git apply --ignore-whitespace light-patch.txt
+          ls | head
+          python3 - <<'PY'
+          import zipfile, os
+          root = "/tmp/light"
+          out = os.environ["GITHUB_WORKSPACE"] + "/crates/horizon-client-render/shaderpacks/LIGHT-HorizonFix-Lite.zip"
+          os.makedirs(os.path.dirname(out), exist_ok=True)
+          with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+              for dp, _, fns in os.walk(root):
+                  if "/.git" in dp: continue
+                  for f in fns:
+                      p = os.path.join(dp, f)
+                      if p.endswith("light-patch.txt"): continue
+                      z.write(p, os.path.relpath(p, root))
+          print("zip entries:", len(zipfile.ZipFile(out).namelist()))
+          PY
+          ls -lh "$GITHUB_WORKSPACE/crates/horizon-client-render/shaderpacks/"
+
+      - name: Generate launcher icon
+        run: |
+          pip install -q pillow
+          python3 minerust/make-minerust-icon.py /tmp/icon-1024.png
+          cp /tmp/icon-512.png packaging/android/res/drawable-nodpi/launcher_icon.png
+          ls -lh packaging/android/res/drawable-nodpi/
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: minerust-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;$NDK_VERSION" "platform-tools" > /dev/null
+
+      - name: Build arm64 cdylib
+        run: |
+          BIN="$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CC_aarch64_linux_android="$BIN/aarch64-linux-android28-clang"
+          export CXX_aarch64_linux_android="$BIN/aarch64-linux-android28-clang++"
+          export AR_aarch64_linux_android="$BIN/llvm-ar"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$BIN/aarch64-linux-android28-clang"
+          cargo build -p horizon-android --target aarch64-linux-android \
+            --profile fast --no-default-features --features audio
+          "$BIN/llvm-strip" --strip-unneeded \
+            -o libhorizon_android.so \
+            target/aarch64-linux-android/fast/libhorizon_android.so
+          ls -la libhorizon_android.so
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libhorizon_android-arm64
+          path: libhorizon_android.so
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish .so as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: minerust-so
+          name: "Minerust native library"
+          files: libhorizon_android.so
+          fail_on_unmatched_files: true
