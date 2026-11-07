@@ -1,0 +1,374 @@
+diff --git a/crates/horizon-client-render/src/graphics.rs b/crates/horizon-client-render/src/graphics.rs
+index b404c9c..bb32062 100644
+--- a/crates/horizon-client-render/src/graphics.rs
++++ b/crates/horizon-client-render/src/graphics.rs
+@@ -413,7 +413,7 @@ impl Default for Graphics {
+             lod_distance: 0,
+             far_detail: FarDetail::Full,
+             cave_culling: true,
+-            entity_culling: false,
++            entity_culling: true,
+             chunk_updates: 0,
+             upload_budget_kib: 0,
+             sky: true,
+@@ -436,7 +436,7 @@ impl Default for Graphics {
+             hdr_key: "key.keyboard.unknown".into(),
+             battery: false,
+             api: GraphicsApi::Auto,
+-            shader_pack: String::new(),
++            shader_pack: crate::shader_pack_list::BUNDLED_FILE.into(),
+         }
+     }
+ }
+diff --git a/crates/horizon-client-render/src/settings.rs b/crates/horizon-client-render/src/settings.rs
+index aae4170..657fcf5 100644
+--- a/crates/horizon-client-render/src/settings.rs
++++ b/crates/horizon-client-render/src/settings.rs
+@@ -209,8 +209,8 @@ impl Default for Settings {
+     fn default() -> Self {
+         Self {
+             fov: 70.0,
+-            render_distance: 12,
+-            simulation_distance: 12,
++            render_distance: 8,
++            simulation_distance: 6,
+             sensitivity: 0.5,
+             master_volume: 1.0,
+             volumes: [1.0; 11],
+diff --git a/crates/horizon-client-render/src/shader_pack_list.rs b/crates/horizon-client-render/src/shader_pack_list.rs
+index c9a8f33..491be9c 100644
+--- a/crates/horizon-client-render/src/shader_pack_list.rs
++++ b/crates/horizon-client-render/src/shader_pack_list.rs
+@@ -6,6 +6,24 @@ use std::path::Path;
+ 
+ pub const DIR: &str = "shaderpacks";
+ 
++/// The pack this fork ships and picks on a fresh install: LIGHT's look tuned for
++/// mobile GPUs (smaller shadow map, RGBA8 gbuffer, no TAA, fewer samples).
++pub const BUNDLED_FILE: &str = "LIGHT-HorizonFix-Lite.zip";
++const BUNDLED_BYTES: &[u8] = include_bytes!("../shaderpacks/LIGHT-HorizonFix-Lite.zip");
++
++/// Put the bundled pack in `dir` when it is not there yet, so the pack named by
++/// `Settings` default is always readable. Best effort: a read-only folder only
++/// loses the default, never the launcher.
++pub fn ensure_bundled(dir: &Path) {
++    let path = dir.join(BUNDLED_FILE);
++    if std::fs::metadata(&path).is_ok_and(|m| m.len() == BUNDLED_BYTES.len() as u64) {
++        return;
++    }
++    if std::fs::create_dir_all(dir).is_ok() {
++        let _ = std::fs::write(&path, BUNDLED_BYTES);
++    }
++}
++
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum Kind {
+     /// A folder with `horizon-shaders.toml`, or a `.hshader`.
+diff --git a/crates/horizon-client/src/android/document_store.rs b/crates/horizon-client/src/android/document_store.rs
+index ef08807..bfaa8ca 100644
+--- a/crates/horizon-client/src/android/document_store.rs
++++ b/crates/horizon-client/src/android/document_store.rs
+@@ -112,7 +112,7 @@ fn resolve(home: &Path, id: &str) -> io::Result<Document> {
+ fn row(home: &Path, id: &str) -> io::Result<Value> {
+     if id == ROOT {
+         return Ok(
+-            json!({"document_id": ROOT, "_display_name": "Horizon Android",
++            json!({"document_id": ROOT, "_display_name": "NolModal Tech",
+             "mime_type": DIRECTORY, "flags": 0}),
+         );
+     }
+@@ -228,7 +228,7 @@ pub fn open(home: &Path, id: &str, mode: &str) -> io::Result<File> {
+ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
+     match op {
+         "roots" => Ok(json!([{"root_id": ROOT, "document_id": ROOT,
+-            "title": "Horizon Android", "flags": 18, "mime_types": "*/*"}])),
++            "title": "NolModal Tech", "flags": 18, "mime_types": "*/*"}])),
+         "document" => Ok(json!([row(home, id)?])),
+         "children" => Ok(json!(children(home, id)?)),
+         "child" => Ok(json!(is_child(home, id, arg))),
+diff --git a/crates/horizon-client/src/android/launcher.rs b/crates/horizon-client/src/android/launcher.rs
+index 9bc41aa..5bbea8d 100644
+--- a/crates/horizon-client/src/android/launcher.rs
++++ b/crates/horizon-client/src/android/launcher.rs
+@@ -41,6 +41,8 @@ pub(super) struct Launcher {
+     pub(super) audio: Option<horizon_client::audio::Audio>,
+     game: Option<Box<dyn ApplicationHandler>>,
+     cursor: (f64, f64),
++    /// Start of the launcher clock behind the identity animation.
++    anim: Instant,
+     mouse_down: bool,
+     feedback: Option<(pages::Action, Instant)>,
+     install: Arc<Mutex<horizon_client::official_install::InstallProgress>>,
+@@ -95,6 +97,7 @@ impl Launcher {
+             audio: None,
+             game: None,
+             cursor: (0.0, 0.0),
++            anim: Instant::now(),
+             mouse_down: false,
+             feedback: None,
+             install: Arc::default(),
+@@ -185,7 +188,9 @@ impl Launcher {
+             return Ok(());
+         }
+         let window = Arc::new(
+-            events.create_window(Window::default_attributes().with_title("Horizon Android"))?,
++            events.create_window(
++                Window::default_attributes().with_title("Minerust"),
++            )?,
+         );
+         crate::display::prepare(&window)?;
+         let gui = game::UiResources {
+@@ -561,7 +566,9 @@ impl ApplicationHandler for Launcher {
+             window.request_redraw();
+         }
+         events.set_control_flow(ControlFlow::WaitUntil(
+-            Instant::now() + Duration::from_millis(100),
++            // 30 fps is enough for the wordmark breathing and its sweeping rule and
++            // costs far less than repainting the whole launcher at display rate.
++            Instant::now() + Duration::from_millis(33),
+         ));
+     }
+     fn exiting(&mut self, events: &ActiveEventLoop) {
+diff --git a/crates/horizon-client/src/android/launcher_pages.rs b/crates/horizon-client/src/android/launcher_pages.rs
+index a4eca0d..a158f9b 100644
+--- a/crates/horizon-client/src/android/launcher_pages.rs
++++ b/crates/horizon-client/src/android/launcher_pages.rs
+@@ -34,7 +34,7 @@ pub(super) enum Action {
+     CopyLoginCode,
+     CancelLogin,
+     ReviewApp,
+-    Repository,
++    CopyContact,
+     SignOut,
+     LoginLink,
+     CloseLogin,
+@@ -223,19 +223,75 @@ impl Launcher {
+         let scale = ui.density / ui.batch.scale;
+         ui.batch
+             .fill(&gui.atlas, 0.0, 0.0, w * scale, h * scale, color::BG);
+-        ui.text(
+-            Face::Medium,
+-            if w < 400.0 {
+-                20.0
+-            } else if w < 700.0 {
+-                24.0
+-            } else {
+-                32.0
+-            },
++        // Identity: this fork's wordmark. Two cheap motion cues run off the launcher
++        // clock (`anim`): the accent mark breathes, and a rule sweeps under the name.
++        // The size shrinks until the whole line fits, so narrow phones never clip it.
++        let t = self.anim.elapsed().as_secs_f32();
++        let breathe = (0.55 + 0.45 * (t * 2.1).sin()).clamp(0.15, 1.0);
++        let brand = "MINERUST";
++        let byline = format!("NOLMODAL × BAGUS DEV  v{}", crate::backend::VERSION);
++        let head_y = if w < 700.0 { 12.0 } else { 28.0 };
++        let mut size = if w < 400.0 {
++            20.0
++        } else if w < 700.0 {
++            24.0
++        } else {
++            32.0
++        };
++        while size > 11.0 {
++            let total = ui.measure(Face::Medium, size, brand)
++                + ui.measure(Face::Medium, size * 0.8, "×")
++                + ui.measure(Face::Medium, size * 0.78, &byline)
++                + size * 1.24;
++            if total <= w - 64.0 {
++                break;
++            }
++            size -= 1.0;
++        }
++        let mark = size * 0.3;
++        ui.rounded(
+             32.0,
+-            if w < 700.0 { 12.0 } else { 28.0 },
+-            color::TEXT,
+-            &format!("Horizon Android {}", crate::backend::VERSION),
++            head_y + (size - mark) * 0.5 + size * 0.06,
++            mark,
++            mark,
++            mark * 0.5,
++            color::with_alpha(color::ACCENT, breathe),
++        );
++        let gap = size * 0.4;
++        let mut x = 32.0 + mark + gap;
++        x += ui.text(Face::Medium, size, x, head_y, color::TEXT, brand);
++        x += gap;
++        x += ui.text(
++            Face::Medium,
++            size * 0.8,
++            x,
++            head_y + size * 0.1,
++            color::with_alpha(color::ACCENT, 0.55 + 0.45 * (t * 2.1 + 1.7).sin().abs()),
++            "×",
++        );
++        x += gap;
++        x += ui.text(
++            Face::Medium,
++            size * 0.78,
++            x,
++            head_y + size * 0.14,
++            color::MUTED,
++            &byline,
++        );
++        let rule_x = 32.0 + mark + gap;
++        let rule_w = (x - rule_x).min(w - 64.0).max(48.0);
++        let rule_y = head_y + size * 1.38;
++        ui.rounded(rule_x, rule_y, rule_w, 1.0, 0.0, color::BORDER);
++        let phase = (t / 3.6) % 1.0;
++        let eased = phase * phase * (3.0 - 2.0 * phase);
++        let seg = (rule_w * 0.26).max(26.0);
++        ui.rounded(
++            rule_x + (rule_w - seg) * eased,
++            rule_y,
++            seg,
++            1.0,
++            0.0,
++            color::ACCENT,
+         );
+         button(
+             &mut ui,
+@@ -992,16 +1048,16 @@ impl Launcher {
+                     Face::Regular,
+                     14.0,
+                     &line.iter().collect::<String>(),
+-                    (w - 210.0).max(40.0),
++                    (w - 250.0).max(40.0),
+                 ),
+             );
+         }
+         button(
+             &mut ui,
+             &mut self.targets,
+-            [w - 142.0, h - 52.0, 110.0, 32.0],
+-            "GitHub",
+-            Action::Repository,
++            [w - 214.0, h - 52.0, 182.0, 32.0],
++            "Bug? 0882-0031-60605",
++            Action::CopyContact,
+             false,
+         );
+         if self.login.visible {
+@@ -1228,7 +1284,7 @@ impl Launcher {
+                 self.catalog.status = if crate::platform::open_documents(&id) {
+                     "Opened in Files. Return here after copying files.".into()
+                 } else {
+-                    "Open the system Files app and choose Horizon Android.".into()
++                    "Open the system Files app and choose NolModal Tech.".into()
+                 };
+             }
+             Some(Action::Import(kind)) => {
+@@ -1253,13 +1309,9 @@ impl Launcher {
+                 self.catalog.remove_local(&self.home);
+                 self.chooser = None;
+             }
+-            Some(Action::Repository) => {
+-                self.catalog.status = if crate::platform::open_repository() {
+-                    "Repository opened in browser."
+-                } else {
+-                    "No browser available to open the repository."
+-                }
+-                .into();
++            Some(Action::CopyContact) => {
++                crate::platform::clipboard_set("0882-0031-60605");
++                self.catalog.status = "Nomor laporan bug 0882-0031-60605 disalin.".into();
+             }
+             Some(Action::Account) => {
+                 self.login.visible = true;
+diff --git a/crates/horizon-client/src/android/performance.rs b/crates/horizon-client/src/android/performance.rs
+index 19f2500..65332ca 100644
+--- a/crates/horizon-client/src/android/performance.rs
++++ b/crates/horizon-client/src/android/performance.rs
+@@ -184,7 +184,7 @@ pub fn export(home: &Path) -> std::result::Result<(), String> {
+     if crate::platform::open_documents("reports") {
+         Ok(())
+     } else {
+-        Err("Open the system Files app, then Horizon Android / Reports.".into())
++        Err("Open the system Files app, then NolModal Tech / Reports.".into())
+     }
+ }
+ 
+diff --git a/crates/horizon-client/src/android/platform.rs b/crates/horizon-client/src/android/platform.rs
+index 01ceb85..4bc7011 100644
+--- a/crates/horizon-client/src/android/platform.rs
++++ b/crates/horizon-client/src/android/platform.rs
+@@ -292,9 +292,6 @@ pub fn cache_dir() -> Option<std::path::PathBuf> {
+     })
+ }
+ 
+-pub fn open_repository() -> bool {
+-    open_url("https://github.com/Vasysik/horizon-android")
+-}
+ /// Browse our SAF directory through the system file manager, never a private path.
+ pub fn open_documents(id: &str) -> bool {
+     with_context(|env, activity| {
+diff --git a/crates/horizon-client/src/game/options.rs b/crates/horizon-client/src/game/options.rs
+index 8eddaa2..165d4d1 100644
+--- a/crates/horizon-client/src/game/options.rs
++++ b/crates/horizon-client/src/game/options.rs
+@@ -84,9 +84,11 @@ impl Game<'_> {
+             .unwrap_or_default()
+             .join("options.txt")
+     }
+-    /// `shaderpacks/` beside `options.txt`.
++    /// `shaderpacks/` beside `options.txt`, with the bundled pack in place.
+     pub(super) fn shader_packs_dir() -> std::path::PathBuf {
+-        Self::options_path().with_file_name(horizon_client::shader_pack_list::DIR)
++        let dir = Self::options_path().with_file_name(horizon_client::shader_pack_list::DIR);
++        horizon_client::shader_pack_list::ensure_bundled(&dir);
++        dir
+     }
+     pub(super) fn gui_size(&self) -> (f32, f32) {
+         let size = self
+diff --git a/crates/horizon-client/src/game/packs.rs b/crates/horizon-client/src/game/packs.rs
+index d3342ac..cd2f806 100644
+--- a/crates/horizon-client/src/game/packs.rs
++++ b/crates/horizon-client/src/game/packs.rs
+@@ -45,7 +45,7 @@ pub fn open_folder(dir: &Path) {
+             let id =
+                 crate::document_store::folder_id(crate::document_store::profile(&home), folder);
+             if !crate::platform::open_documents(&id) {
+-                log::warn!("Open Files, then choose Horizon Android / {folder}");
++                log::warn!("Open Files, then choose NolModal Tech / {folder}");
+             }
+         }
+     }
+diff --git a/crates/horizon-client/src/ui_theme.rs b/crates/horizon-client/src/ui_theme.rs
+index 303d735..dac896b 100644
+--- a/crates/horizon-client/src/ui_theme.rs
++++ b/crates/horizon-client/src/ui_theme.rs
+@@ -62,7 +62,8 @@ pub mod color {
+     pub const MUTED: u32 = hex(P.ink_soft, 255);
+     pub const ACCENT: u32 = hex(P.accent, 255);
+     pub const ON_ACCENT: u32 = hex(P.on_accent, 255);
+-    pub(crate) fn with_alpha(c: u32, a: f32) -> u32 {
++    /// Same accent, dialled down — used by the launcher animation.
++    pub fn with_alpha(c: u32, a: f32) -> u32 {
+         let base = (c >> 24) as f32;
+         (c & 0x00ff_ffff) | ((base * a.clamp(0.0, 1.0)).round() as u32) << 24
+     }
+diff --git a/packaging/android/AndroidManifest.xml b/packaging/android/AndroidManifest.xml
+index c19aca3..4a4a4d4 100644
+--- a/packaging/android/AndroidManifest.xml
++++ b/packaging/android/AndroidManifest.xml
+@@ -7,7 +7,7 @@
+     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+     <uses-feature android:name="android.software.leanback" android:required="false" />
+-    <application android:label="Horizon Android" android:appCategory="game" android:icon="@drawable/launcher_icon" android:banner="@drawable/tv_banner" android:extractNativeLibs="true" android:usesCleartextTraffic="false">
++    <application android:label="Minerust" android:appCategory="game" android:icon="@drawable/launcher_icon" android:banner="@drawable/tv_banner" android:extractNativeLibs="true" android:usesCleartextTraffic="false">
+         <provider android:name="dev.horizon.android.HorizonDocumentsProvider" android:authorities="${applicationId}.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
+             <intent-filter>
+                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+diff --git a/rust-toolchain.toml b/rust-toolchain.toml
+index 8770b1d..2fc3eef 100644
+--- a/rust-toolchain.toml
++++ b/rust-toolchain.toml
+@@ -1,4 +1,3 @@
+ [toolchain]
+-channel = "1.95.0"
++channel = "stable"
+ profile = "minimal"
+-components = ["clippy", "rustfmt"]
