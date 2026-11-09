@@ -1,0 +1,40 @@
+name: Publish Minerust APK
+
+# Mirror APK yang sudah dirakit ke GitHub Release, biar link download permanen
+# dan tidak bergantung pada file host sementara.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: "URL sumber APK"
+        required: true
+      asset_name:
+        description: "Nama file di release"
+        required: false
+        default: "Minerust.apk"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download APK
+        run: |
+          NAME="${{ inputs.asset_name }}"
+          [ -n "$NAME" ] || NAME="Minerust.apk"
+          curl -fL --retry 4 --retry-delay 4 --max-time 600 -o "$NAME" "${{ inputs.apk_url }}"
+          ls -lh "$NAME"
+          sha256sum "$NAME"
+
+      - name: Publish to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: minerust-apk
+          name: "Minerust APK"
+          body: "APK Minerust arm64 - NolModal Tech x Bagus Dev"
+          files: "*.apk"
+          fail_on_unmatched_files: true
