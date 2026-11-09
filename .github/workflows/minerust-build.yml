@@ -1,18 +1,20 @@
 name: Minerust native build
 
-# Build libhorizon_android.so (arm64) di runner GitHub — 4 core, 16 GB RAM.
-# HP cuma download .so dari Release, lalu dirakit jadi APK pakai
-# tools/horizon-assemble-apk.sh (16 detik, tanpa compile).
+# Build libhorizon_android.so (arm64) di runner GitHub - 4 core, 16 GB RAM.
 
 on:
   workflow_dispatch:
+    inputs:
+      patch_url:
+        description: "URL patch (kosong = pakai patch di repo)"
+        required: false
+        default: ""
   push:
     branches: [android]
     paths:
       - 'crates/**'
       - 'minerust/**'
       - 'Cargo.toml'
-      - '.github/workflows/minerust-build.yml'
 
 permissions:
   contents: write
@@ -32,7 +34,16 @@ jobs:
 
       - name: Apply Minerust patch
         run: |
-          git apply --whitespace=nowarn minerust/minerust.patch
+          SRC="${{ inputs.patch_url }}"
+          if [ -n "$SRC" ]; then
+            curl -fsSL --retry 3 --max-time 180 -o /tmp/minerust.patch "$SRC"
+            echo "patch dari URL: $(wc -c < /tmp/minerust.patch) bytes"
+          else
+            cp minerust/minerust.patch /tmp/minerust.patch
+            echo "patch dari repo: $(wc -c < /tmp/minerust.patch) bytes"
+          fi
+          sha256sum /tmp/minerust.patch
+          git apply --whitespace=nowarn /tmp/minerust.patch
           git diff --stat | tail -3
 
       - name: Build LIGHT-HorizonFix-Lite.zip from Modrinth
